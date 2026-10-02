@@ -1,0 +1,26 @@
+{
+  "host": "0.0.0.0",
+  "port": 8000,
+  "mode": "installation",
+  "data_dir": "data",
+  "start_date": "",
+  "end_time": "",
+  "day_override": 0,
+  "api_key": "CHANGE-ME-to-a-long-random-secret",
+  "open_browser": true,
+  "camera": {
+    "enabled": true,
+    "index": 0,
+    "width": 640,
+    "height": 480,
+    "min_area": 0.012,
+    "min_duration": 1.0,
+    "lost_timeout": 1.2,
+    "debug_window": false
+  },
+  "remote": {
+    "enabled": false,
+    "api": "https://your-site.com/api",
+    "interval": 4
+  }
+}

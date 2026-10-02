@@ -1,0 +1,40 @@
+:root {
+  --bg: #030305;
+  --ink: rgba(225, 220, 205, 0.78);
+  --dim: rgba(225, 220, 205, 0.32);
+  --accent: #e9c98f;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; color: var(--ink);
+  font-family: "Vazirmatn", "Segoe UI", system-ui, sans-serif; }
+canvas { display: block; width: 100vw; height: 100vh; }
+#hud { position: fixed; inset: 0; pointer-events: none; transition: opacity 1.2s; text-shadow: 0 0 6px #000, 0 0 14px #000; }
+#hud.hidden { opacity: 0; }
+#title { position: absolute; top: 28px; left: 32px; letter-spacing: 0.08em; }
+#title .fa { font-size: 18px; color: var(--ink); }
+#title .en { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.32em; margin-top: 4px; }
+#stats { position: absolute; left: 32px; bottom: 74px; font: 11px/1.9 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--dim); letter-spacing: 0.12em; white-space: pre; direction: ltr; }
+#stats b { color: var(--ink); font-weight: 400; }
+#timeline { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; align-items: center;
+  gap: 0; pointer-events: auto; direction: ltr; font: 11px ui-monospace, Consolas, monospace; letter-spacing: 0.14em; }
+#timeline button { background: none; border: 0; color: var(--dim); font: inherit; letter-spacing: inherit; cursor: pointer;
+  padding: 8px 6px; white-space: nowrap; }
+#timeline button:disabled { opacity: 0.35; cursor: default; }
+#timeline button.on { color: var(--accent); }
+#timeline button.now::before { content: "● "; color: var(--accent); }
+#timeline .bar { width: 26px; height: 1px; background: var(--dim); opacity: 0.6; }
+#timeline .live { margin-left: 18px; border: 1px solid var(--dim); border-radius: 2px; padding: 5px 10px; }
+#timeline .live.on { border-color: var(--accent); }
+#mode { position: absolute; right: 32px; top: 30px; font: 11px ui-monospace, Consolas, monospace; letter-spacing: 0.2em;
+  color: var(--dim); direction: ltr; }
+body.tv #timeline { display: none; }
+body.clean #hud { display: none; }
+@media (max-width: 720px) {
+  #title { top: 16px; left: 16px; }
+  #stats { left: 16px; bottom: 64px; font-size: 10px; }
+  #timeline { bottom: 14px; font-size: 9px; max-width: calc(100vw - 16px); overflow-x: auto; }
+  #timeline .bar { width: 8px; }
+  #timeline .live { margin-left: 8px; }
+  #mode { right: 16px; top: 18px; }
+}

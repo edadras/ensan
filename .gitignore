@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+data_preview/
+site_php/data/

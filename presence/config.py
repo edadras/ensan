@@ -17,7 +17,10 @@ DEFAULTS = {
     "start_date": "",
     # Moment the work freezes forever, e.g. "2026-10-09 21:00". Empty = never.
     "end_time": "",
-    # Force a day (1..7) for testing. 0 = automatic from start_date.
+    # Length of the exhibition in days (only for the daily archive / timeline).
+    # The artwork itself evolves with the number of visitors, not with days.
+    "days": 7,
+    # Force a calendar day for testing. 0 = automatic from start_date.
     "day_override": 0,
     # Secret shared between the exhibition PC and the website.
     "api_key": "CHANGE-ME-to-a-long-random-secret",

@@ -22,7 +22,7 @@ $parts = explode('/', $path);
 
 function out($code, $body) { http_response_code($code); echo is_string($body) ? $body : json_encode($body); exit; }
 function save($file, $text) { $tmp = $file . '.tmp' . getmypid(); file_put_contents($tmp, $text, LOCK_EX); rename($tmp, $file); }
-$valid = ['1', '2', '3', '4', '5', '6', '7', 'final'];
+$valid = array_merge(array_map('strval', range(1, 30)), ['final']);
 
 switch ($parts[0]) {
   case 'ingest':
@@ -51,9 +51,9 @@ switch ($parts[0]) {
 
   case 'snapshots':
     $days = [];
-    for ($d = 1; $d <= 7; $d++) if (file_exists("$DATA/snap-$d.json")) $days[] = $d;
+    for ($d = 1; $d <= 30; $d++) if (file_exists("$DATA/snap-$d.json")) $days[] = $d;
     $s = json_decode(@file_get_contents("$DATA/state.json") ?: '{}', true);
-    out(200, ['days' => $days, 'final' => file_exists("$DATA/snap-final.json"), 'live_day' => $s['day'] ?? 1, 'frozen' => $s['frozen'] ?? false]);
+    out(200, ['days' => $days, 'final' => file_exists("$DATA/snap-final.json"), 'live_day' => $s['day'] ?? 1, 'total' => $s['days'] ?? 7, 'frozen' => $s['frozen'] ?? false]);
 
   case 'snapshot':
     $k = $parts[1] ?? '';

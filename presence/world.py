@@ -13,6 +13,9 @@ from collections import deque
 from datetime import date, datetime
 
 W = 1.78
+# The work evolves with the number of people, not with the calendar:
+# a 6-day or a 10-day exhibition both reach the same stages.
+STAGE_AT = [0, 20, 100, 250, 500, 1500, 4000]
 PHASES = ["Birth", "Memory", "Connection", "Organism", "Collective", "Complexity", "Emergence"]
 PHASES_FA = ["تولد", "حافظه", "اتصال", "ارگانیسم", "جمع", "پیچیدگی", "ظهور"]
 MAX_RECENT = 320          # raw threads shown individually
@@ -100,14 +103,21 @@ class World:
         self.frozen = store.meta_get("frozen") == "1"
 
     # ------------------------------------------------------------------ time
+    def days(self):
+        return int(clamp(int(self.cfg.get("days", 7)), 1, 30))
+
     def day(self):
+        """Calendar day of the exhibition (only used for the daily archive)."""
         if self.cfg.get("day_override"):
-            return int(clamp(int(self.cfg["day_override"]), 1, 7))
-        return int(clamp((date.today() - self.start_date).days + 1, 1, 7))
+            return int(clamp(int(self.cfg["day_override"]), 1, self.days()))
+        return int(clamp((date.today() - self.start_date).days + 1, 1, self.days()))
+
+    def stage(self):
+        """1..7, from the number of visitors."""
+        return max(i + 1 for i, t in enumerate(STAGE_AT) if self.visitors >= t)
 
     def evolution(self):
-        d = self.day()
-        return clamp(0.62 * growth_curve(self.visitors) + 0.38 * (d - 1) / 6.0, 0.0, 1.0)
+        return clamp(growth_curve(self.visitors), 0.0, 1.0)
 
     def freeze_progress(self):
         if self.frozen:
@@ -120,7 +130,7 @@ class World:
         return not self.freeze_started and not self.frozen
 
     def params(self):
-        d = self.day()
+        d = self.stage()
         evo = self.evolution()
         return {
             "drift": 0.0 if d < 2 else clamp(0.35 + 0.11 * (d - 2), 0, 1),
@@ -281,7 +291,7 @@ class World:
 
     def organisms(self):
         evo = self.evolution()
-        day = self.day()
+        day = self.stage()
         cl = [c for c in self.clusters.values() if c["mass"] >= 2]
         if not cl:
             return []
@@ -376,6 +386,7 @@ class World:
 
     def _build_state(self):
         day = self.day()
+        stage = self.stage()
         evo = self.evolution()
         orgs = self.organisms()
         links = sum(len(c["links"]) for c in self.clusters.values())
@@ -384,8 +395,10 @@ class World:
         return {
             "v": self.version,
             "day": day,
-            "phase": PHASES[day - 1],
-            "phase_fa": PHASES_FA[day - 1],
+            "days": self.days(),
+            "stage": stage,
+            "phase": PHASES[stage - 1],
+            "phase_fa": PHASES_FA[stage - 1],
             "evolution": round(evo, 4),
             "params": self.params(),
             "frozen": self.frozen,
@@ -454,4 +467,4 @@ class World:
     def snapshot_list(self):
         keys = self.store.list_snapshots()
         days = sorted(int(k) for k in keys if k.isdigit())
-        return {"days": days, "final": "final" in keys, "live_day": self.day(), "frozen": self.frozen}
+        return {"days": days, "final": "final" in keys, "live_day": self.day(), "total": self.days(), "frozen": self.frozen}

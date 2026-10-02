@@ -38,14 +38,14 @@ class Mirror:
             self.received = time.time()
             self.store.save_snapshot("live", self.state_json)
         for k, s in (data.get("snapshots") or {}).items():
-            if k in {"1", "2", "3", "4", "5", "6", "7", "final"}:
+            if k == "final" or (k.isdigit() and 1 <= int(k) <= 30):
                 self.store.save_snapshot(k, json.dumps(s, ensure_ascii=False))
 
     def snapshot_list(self):
         keys = self.store.list_snapshots()
         st = json.loads(self.state_json or "{}")
         return {"days": sorted(int(k) for k in keys if k.isdigit()), "final": "final" in keys,
-                "live_day": st.get("day", 1), "frozen": st.get("frozen", False)}
+                "live_day": st.get("day", 1), "total": st.get("days", 7), "frozen": st.get("frozen", False)}
 
 
 def create_app(cfg, store, world=None):

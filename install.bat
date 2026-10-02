@@ -19,6 +19,8 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+echo Downloading face models (about 75 MB, once)...
+.venv\Scripts\python -m presence.models
 echo.
 echo Installed. Run start.bat to start the work.
 pause

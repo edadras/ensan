@@ -25,8 +25,17 @@ class Store:
                 duration REAL, speed REAL, points TEXT, gestures TEXT);
             CREATE TABLE IF NOT EXISTS clusters (id INTEGER PRIMARY KEY, data TEXT);
             CREATE TABLE IF NOT EXISTS snapshots (k TEXT PRIMARY KEY, ts REAL, state TEXT);
+            CREATE TABLE IF NOT EXISTS persons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, emb BLOB, first REAL, last REAL, visits INTEGER);
+            CREATE TABLE IF NOT EXISTS damages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER,
+                x REAL, y REAL, strength REAL, seed INTEGER, cause TEXT);
             """
         )
+        cols = [r[1] for r in self.db.execute("PRAGMA table_info(threads)").fetchall()]
+        if "person_id" not in cols:
+            self.db.execute("ALTER TABLE threads ADD COLUMN person_id INTEGER")
+            self.db.execute("CREATE INDEX IF NOT EXISTS threads_person ON threads(person_id)")
 
     # --- meta -------------------------------------------------------------
     def meta_get(self, k, default=None):
@@ -42,9 +51,10 @@ class Store:
     def insert_thread(self, t):
         with self.lock:
             cur = self.db.execute(
-                "INSERT INTO threads (ts, day, seed, duration, speed, points, gestures) VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO threads (ts, day, seed, duration, speed, points, gestures, person_id)"
+                " VALUES (?,?,?,?,?,?,?,?)",
                 (t["ts"], t["day"], t["seed"], t["duration"], t["speed"],
-                 json.dumps(t["pts"]), json.dumps(t.get("gestures") or {})),
+                 json.dumps(t["pts"]), json.dumps(t.get("gestures") or {}), t.get("person")),
             )
             return cur.lastrowid
 
@@ -71,6 +81,47 @@ class Store:
         for r in rows:
             yield {"id": r[0], "ts": r[1], "day": r[2], "seed": r[3], "duration": r[4], "speed": r[5],
                    "pts": json.loads(r[6]), "gestures": json.loads(r[7] or "{}")}
+
+    def person_threads(self, pid, n=16):
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT id, points FROM threads WHERE person_id=? ORDER BY id DESC LIMIT ?", (pid, n)).fetchall()
+        return [(r[0], json.loads(r[1])) for r in rows]
+
+    # --- persons: an anonymous face signature (128 numbers), never an image ---
+    def persons_all(self):
+        with self.lock:
+            return self.db.execute("SELECT id, emb, visits FROM persons").fetchall()
+
+    def person_create(self, emb_bytes):
+        now = time.time()
+        with self.lock:
+            cur = self.db.execute("INSERT INTO persons (emb, first, last, visits) VALUES (?,?,?,1)",
+                                  (emb_bytes, now, now))
+            return cur.lastrowid
+
+    def person_update(self, pid, emb_bytes):
+        with self.lock:
+            self.db.execute("UPDATE persons SET emb=?, last=?, visits=visits+1 WHERE id=?",
+                            (emb_bytes, time.time(), pid))
+
+    def persons_forget_all(self):
+        with self.lock:
+            self.db.execute("DELETE FROM persons")
+            self.db.execute("UPDATE threads SET person_id=NULL")
+
+    # --- damages ------------------------------------------------------------
+    def insert_damage(self, d):
+        with self.lock:
+            cur = self.db.execute(
+                "INSERT INTO damages (ts, day, x, y, strength, seed, cause) VALUES (?,?,?,?,?,?,?)",
+                (d["ts"], d["day"], d["x"], d["y"], d["strength"], d["seed"], d["cause"]))
+            return cur.lastrowid
+
+    def damages(self):
+        with self.lock:
+            return self.db.execute(
+                "SELECT id, x, y, strength, seed, ts, cause FROM damages ORDER BY id").fetchall()
 
     # --- clusters ---------------------------------------------------------
     def load_clusters(self):

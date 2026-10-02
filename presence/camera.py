@@ -1,12 +1,16 @@
-"""Camera -> people -> live bodies + presence threads.
+"""Camera -> people -> live bodies + presence threads (+ faces, strikes, shouts).
 
-Pure OpenCV (background subtraction + blob tracking): no skeleton, no
-face, no image is ever stored. Only motion paths leave the camera.
+Background subtraction + blob tracking for bodies (no skeleton, no image is
+ever stored). Optionally a face signature lets a returning visitor find their
+own traces, and an unhappy face, a strike toward the screen or a shout
+breaks a small part of the work.
 """
 import math
+import random
 import sys
 import threading
 import time
+from collections import deque
 
 from .world import W, clamp
 
@@ -32,6 +36,11 @@ class Track:
         self.speed = 0.0
         self.still_since = now
         self.prev = None
+        self.hist = deque(maxlen=20)      # (t, area, aspect, speed) for strike detection
+        self.sigs = []                    # face signatures seen during this visit
+        self.pid = None                   # anonymous person id once recognised
+        self.unhappy = 0.0
+        self.last_damage = 0.0
         self.update(blob, now)
 
     def update(self, blob, now):
@@ -52,11 +61,29 @@ class Track:
             self.base_aspect = aspect if self.base_aspect is None else self.base_aspect * 0.8 + aspect * 0.2
             self.base_h = bh if self.base_h is None else self.base_h * 0.8 + bh * 0.2
         self.aspect, self.h = aspect, bh
+        self.hist.append((now, bw * bh, aspect, self.speed))
         self.prev = pos
         self.last = now
         self.blob = blob
         if not self.path or math.hypot(pos[0] - self.path[-1][0], pos[1] - self.path[-1][1]) > 0.015:
             self.path.append([round(pos[0], 3), round(pos[1], 3)])
+
+    def strike(self, now):
+        """A sudden lunge toward the screen (silhouette grows fast) or a
+        sharp arm thrust (silhouette widens fast while moving)."""
+        if now - self.first < 1.5 or len(self.hist) < 4:
+            return 0.0
+        recent = [h for h in self.hist if now - h[0] <= 0.45]
+        if len(recent) < 3:
+            return 0.0
+        a0, a1 = recent[0], recent[-1]
+        grow = a1[1] / max(1.0, a0[1])
+        widen = a1[2] / max(0.05, a0[2])
+        if grow > 1.5:
+            return min(1.0, 0.5 + (grow - 1.5))
+        if widen > 1.7 and a1[3] > 0.6:
+            return min(1.0, 0.45 + (widen - 1.7) * 0.5)
+        return 0.0
 
     def gestures(self, now):
         return {
@@ -69,8 +96,17 @@ class Track:
     def body(self, now):
         g = self.gestures(now)
         x, y = self.prev
-        return {"i": self.id, "x": round(x, 3), "y": round(y, 3),
-                "vx": round(self.vx, 3), "vy": round(self.vy, 3), **g}
+        b = {"i": self.id, "x": round(x, 3), "y": round(y, 3),
+             "vx": round(self.vx, 3), "vy": round(self.vy, 3), **g}
+        if self.pid:
+            b["pid"] = self.pid
+        return b
+
+    def signature(self):
+        if not self.sigs:
+            return None
+        s = np.mean(self.sigs, axis=0)
+        return s / (np.linalg.norm(s) + 1e-9)
 
 
 def to_world(cx, cy, bh, fw, fh):
@@ -83,12 +119,17 @@ def to_world(cx, cy, bh, fw, fh):
 
 
 class CameraTracker(threading.Thread):
-    def __init__(self, world, cfg):
+    def __init__(self, world, cfg, identity_cfg=None, damage_cfg=None):
         super().__init__(daemon=True)
         self.world = world
         self.cfg = cfg
+        self.icfg = identity_cfg or {}
+        self.dcfg = damage_cfg or {}
         self.tracks = {}
         self.running = True
+        self.faces = None
+        self.ids = None
+        self.lock = threading.Lock()
 
     def open(self):
         idx = self.cfg.get("index", 0)
@@ -100,10 +141,27 @@ class CameraTracker(threading.Thread):
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.get("height", 480))
         return cap if cap.isOpened() else None
 
+    def setup_faces(self):
+        want_id = self.icfg.get("enabled", True)
+        want_emo = self.dcfg.get("enabled", True) and self.dcfg.get("displeasure", True)
+        if not (want_id or want_emo):
+            return
+        try:
+            from .faces import FaceEngine, Identities
+            self.faces = FaceEngine(want_id, want_emo)
+            if not self.faces.ok:
+                self.faces = None
+            elif want_id and self.faces.recognizer is not None:
+                self.ids = Identities(self.world.store, self.icfg.get("threshold", 0.42))
+        except Exception as e:
+            print("[faces] disabled:", e)
+            self.faces = None
+
     def run(self):
         if cv2 is None:
             print("[camera] OpenCV not installed - camera disabled")
             return
+        self.setup_faces()
         while self.running:
             cap = self.open()
             if cap is None:
@@ -123,7 +181,7 @@ class CameraTracker(threading.Thread):
         bg = cv2.createBackgroundSubtractorMOG2(history=800, varThreshold=36, detectShadows=True)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         fails = 0
-        last_live = 0
+        last_live = last_face = 0
         warm = time.time()
         while self.running:
             ok, frame = cap.read()
@@ -152,17 +210,70 @@ class CameraTracker(threading.Thread):
                 blobs.append({"bbox": (x, y, bw, bh), "world": to_world(cx, cy, bh, fw, fh)})
             if now - warm < 5:
                 continue  # let the background model learn the empty room
-            self.match(blobs, now)
-            if now - last_live > 1 / 15:
-                last_live = now
-                self.world.set_live([t.body(now) for t in self.tracks.values() if now - t.last < 0.4])
+            with self.lock:
+                self.match(blobs, now)
+                if self.faces and now - last_face > 0.25:
+                    last_face = now
+                    self.look_at_faces(frame, fw, now)
+                if self.dcfg.get("enabled", True) and self.dcfg.get("strike", True):
+                    for t in self.tracks.values():
+                        s = t.strike(now)
+                        if s > 0 and now - t.last_damage > 6:
+                            t.last_damage = now
+                            self.world.damage(t.prev[0], t.prev[1], s, "strike")
+                if now - last_live > 1 / 15:
+                    last_live = now
+                    self.world.set_live([t.body(now) for t in self.tracks.values() if now - t.last < 0.4])
             if self.cfg.get("debug_window"):
-                for t in self.tracks.values():
+                for t in list(self.tracks.values()):
                     x, y, bw, bh = t.blob["bbox"]
                     cv2.rectangle(small, (x, y), (x + bw, y + bh), (0, 255, 200), 1)
-                    cv2.putText(small, str(t.id), (x, y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 200), 1)
+                    label = "%d%s u%.1f" % (t.id, " p%d" % t.pid if t.pid else "", t.unhappy)
+                    cv2.putText(small, label, (x, y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 200), 1)
                 cv2.imshow("presence camera", np.hstack([small, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)]))
                 cv2.waitKey(1)
+
+    def look_at_faces(self, frame, fw, now):
+        scale = frame.shape[1] / fw
+        work = cv2.resize(frame, (640, int(640 * frame.shape[0] / frame.shape[1])))
+        k = frame.shape[1] / 640.0
+        for face in self.faces.detect(work):
+            fx, fy = (face[0] + face[2] / 2) * k / scale, (face[1] + face[3] / 2) * k / scale
+            owner = None
+            for t in self.tracks.values():
+                x, y, bw, bh = t.blob["bbox"]
+                if x - 4 <= fx <= x + bw + 4 and y - 8 <= fy <= y + bh:
+                    owner = t
+                    break
+            if owner is None or face[2] < 28:   # too small/far for a reliable look
+                continue
+            if self.ids is not None and len(owner.sigs) < 6:
+                sig = self.faces.signature(work, face)
+                if sig is not None:
+                    owner.sigs.append(sig)
+                    if owner.pid is None and len(owner.sigs) >= 2:
+                        pid, score = self.ids.match(owner.signature())
+                        if pid:
+                            owner.pid = pid
+                            print("[faces] welcome back, visitor #%d (%.2f)" % (pid, score))
+            if self.dcfg.get("enabled", True) and self.dcfg.get("displeasure", True):
+                u = self.faces.unhappiness(work, face)
+                owner.unhappy = owner.unhappy * 0.85 + u * 0.15
+                if owner.unhappy > 0.55 and now - owner.last_damage > 30:
+                    owner.last_damage = now
+                    owner.unhappy = 0.0
+                    self.world.damage(owner.prev[0], owner.prev[1], 0.5, "displeasure")
+
+    def shout(self, strength):
+        """Called by the microphone: the nearest (largest) person shouted."""
+        with self.lock:
+            live = [t for t in self.tracks.values() if time.time() - t.last < 0.5]
+        if live:
+            t = max(live, key=lambda t: t.blob["bbox"][2] * t.blob["bbox"][3])
+            x, y = t.prev
+        else:
+            x, y = random.uniform(-1, 1), 0.0
+        self.world.damage(x, y, strength, "shout")
 
     def match(self, blobs, now):
         used = set()
@@ -192,5 +303,11 @@ class CameraTracker(threading.Thread):
                 if len(t.path) < 2:  # someone who stood perfectly still
                     p = t.path[0]
                     t.path.append([p[0] + 0.03, p[1] + 0.01])
-                g = t.gestures(now)
-                self.world.add_presence(t.path, duration=duration, speed=t.speed, gestures=g)
+                pid = t.pid
+                sig = t.signature() if self.ids is not None else None
+                if sig is not None:
+                    if pid is None:
+                        pid, _ = self.ids.match(sig)
+                    pid = self.ids.remember(sig, pid)
+                self.world.add_presence(t.path, duration=duration, speed=t.speed,
+                                        gestures=t.gestures(now), person=pid)

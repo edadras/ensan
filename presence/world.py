@@ -83,6 +83,10 @@ class World:
         self._last_snapshot = 0.0
         self._last_backup = time.time()
         self._snap_version = None
+        self._person_cache = {}
+        self.damage_list = [list(r) for r in store.damages()]
+        self._last_damage = 0.0
+        self._damage_times = deque(maxlen=200)
 
         start = cfg.get("start_date") or store.meta_get("start_date")
         if not start:
@@ -129,7 +133,7 @@ class World:
         }
 
     # -------------------------------------------------------------- presence
-    def add_presence(self, points, duration=2.0, speed=0.2, gestures=None, ts=None, day=None):
+    def add_presence(self, points, duration=2.0, speed=0.2, gestures=None, ts=None, day=None, person=None):
         """A person left. Their path becomes one faint Presence Thread."""
         if not points or len(points) < 2:
             return None
@@ -143,11 +147,13 @@ class World:
             t = {
                 "ts": ts, "day": day or self.day(), "seed": random.randint(1, 2 ** 31 - 1),
                 "duration": float(duration), "speed": float(speed), "pts": pts,
-                "gestures": gestures or {},
+                "gestures": gestures or {}, "person": person,
             }
             t["id"] = self.store.insert_thread(t)
             self.recent.append(t)
             self.visitors += 1
+            if person:
+                self._person_cache.pop(person, None)
             self._absorb(t)
 
             # Collective response: simultaneous arrivals send a wave.
@@ -306,8 +312,46 @@ class World:
         out.sort(key=lambda o: -o["m"])
         return out
 
+    # ---------------------------------------------------------------- damage
+    def damage(self, x, y=0.0, strength=0.7, cause="strike"):
+        """Shouting, striking or displeasure breaks a small part of the work.
+        The broken pieces fall to the floor and stay there."""
+        dcfg = self.cfg.get("damage", {})
+        if not dcfg.get("enabled", True):
+            return None
+        with self.lock:
+            if not self.accepting():
+                return None
+            now = time.time()
+            if now - self._last_damage < dcfg.get("cooldown", 12):
+                return None
+            if sum(1 for t in self._damage_times if now - t < 3600) >= dcfg.get("max_per_hour", 30):
+                return None
+            self._last_damage = now
+            self._damage_times.append(now)
+            d = {"ts": now, "day": self.day(), "x": _r(clamp(x, -W, W)), "y": _r(clamp(y, -1, 1)),
+                 "strength": _r(clamp(strength, 0.2, 1.0)), "seed": random.randint(1, 99999), "cause": cause}
+            d["id"] = self.store.insert_damage(d)
+            self.damage_list.append([d["id"], d["x"], d["y"], d["strength"], d["seed"], round(now, 2), cause])
+            self.pulses.append([d["x"], -0.2, 0.9, round(now, 2)])
+            self.version += 1
+            print("[damage] %s at x=%.2f strength %.2f" % (cause, d["x"], d["strength"]))
+            return d["id"]
+
     # ------------------------------------------------------------------ live
+    def person_memory(self, pid):
+        """Thread ids + paths left by one (anonymous) returning person."""
+        if pid not in self._person_cache:
+            rows = self.store.person_threads(pid, 16)
+            self._person_cache[pid] = ([r[0] for r in rows], [[v for pt in r[1] for v in pt] for r in rows[:8]])
+        return self._person_cache[pid]
+
     def set_live(self, bodies):
+        for b in bodies:
+            if b.get("pid"):
+                ids, paths = self.person_memory(b["pid"])
+                if ids:
+                    b["lit"], b["mem"] = ids, paths
         with self.lock:
             self.live = [] if self.frozen else bodies
             self.live_ts = time.time()
@@ -363,6 +407,7 @@ class World:
                 for c in sorted(self.clusters.values(), key=lambda c: c["id"])
             ],
             "organisms": orgs,
+            "damages": self.damage_list[-200:],
         }
 
     # ------------------------------------------------------------------ tick

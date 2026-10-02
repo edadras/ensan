@@ -114,6 +114,26 @@ def create_app(cfg, store, world=None):
         tid = world.add_presence(d["points"], d.get("duration", 2), d.get("speed", 0.2), d.get("gestures"))
         return {"ok": tid is not None, "id": tid}
 
+    @app.post("/api/damage")
+    async def damage(request: Request):
+        """Break a small part of the work: {"x": -1.7..1.7, "strength": 0.2..1, "cause": "strike"}"""
+        check_key(request)
+        if world is None:
+            raise HTTPException(400, "mirror mode")
+        d = await request.json()
+        did = world.damage(d.get("x", 0.0), d.get("y", 0.0), d.get("strength", 0.7), d.get("cause", "manual"))
+        return {"ok": did is not None, "id": did}
+
+    @app.post("/api/admin/forget-faces")
+    async def forget_faces(request: Request):
+        """Delete every face signature (the traces in the work remain, anonymously)."""
+        check_key(request)
+        if world is None:
+            raise HTTPException(400, "mirror mode")
+        world.store.persons_forget_all()
+        world._person_cache.clear()
+        return {"ok": True}
+
     @app.post("/api/live")
     async def set_live(request: Request):
         check_key(request)

@@ -18,6 +18,19 @@
     "lost_timeout": 1.2,
     "debug_window": false
   },
+  "identity": {
+    "enabled": true,
+    "threshold": 0.42
+  },
+  "damage": {
+    "enabled": true,
+    "shout": true,
+    "shout_db": 20,
+    "strike": true,
+    "displeasure": true,
+    "cooldown": 12,
+    "max_per_hour": 30
+  },
   "remote": {
     "enabled": false,
     "api": "https://your-site.com/api",

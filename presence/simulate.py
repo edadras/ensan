@@ -65,7 +65,9 @@ class Simulator(threading.Thread):
     def spawn(self):
         r = self.rng
         path = fake_path(r)
-        self.bodies.append({"id": self.next_id, "path": path, "t": 0.0,
+        # some fake visitors come back again and again (anonymous person ids 1..6)
+        pid = r.randint(1, 6) if r.random() < 0.35 else None
+        self.bodies.append({"id": self.next_id, "path": path, "t": 0.0, "pid": pid,
                             "dur": r.uniform(4, 14), "g": {"hu": 0, "ao": 0, "st": 0, "fa": 0},
                             "gt": 0.0})
         self.next_id += 1
@@ -87,7 +89,7 @@ class Simulator(threading.Thread):
                 f = b["t"] / b["dur"]
                 if f >= 1:
                     self.bodies.remove(b)
-                    self.world.add_presence(b["path"], duration=b["dur"], speed=0.3, gestures=b["g"])
+                    self.world.add_presence(b["path"], duration=b["dur"], speed=0.3, gestures=b["g"], person=b["pid"])
                     continue
                 b["gt"] -= dt
                 if b["gt"] <= 0:
@@ -100,5 +102,13 @@ class Simulator(threading.Thread):
                 u = k - i
                 x = p[i][0] + (p[j][0] - p[i][0]) * u
                 y = p[i][1] + (p[j][1] - p[i][1]) * u
-                live.append({"i": b["id"], "x": round(x, 3), "y": round(y, 3), "vx": 0, "vy": 0, **b["g"]})
+                body = {"i": b["id"], "x": round(x, 3), "y": round(y, 3), "vx": 0, "vy": 0, **b["g"]}
+                if b["pid"]:
+                    body["pid"] = b["pid"]
+                live.append(body)
+            # now and then someone shouts, strikes or frowns: a piece breaks
+            if live and self.rng.random() < dt / 50:
+                b = self.rng.choice(live)
+                self.world.damage(b["x"], b["y"], self.rng.uniform(0.4, 1.0),
+                                  self.rng.choice(["shout", "strike", "displeasure"]))
             self.world.set_live(live)

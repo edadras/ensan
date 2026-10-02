@@ -32,6 +32,19 @@ DEFAULTS = {
         "lost_timeout": 1.2,    # seconds before a lost track is closed
         "debug_window": False,  # show an OpenCV window with detections
     },
+    "identity": {
+        "enabled": True,        # recognise returning visitors (anonymous face signature, local only)
+        "threshold": 0.42,      # higher = stricter matching
+    },
+    "damage": {
+        "enabled": True,
+        "shout": True,          # microphone: a sudden loud sound
+        "shout_db": 20,         # dB above the room's background noise
+        "strike": True,         # a fast strike / lunge toward the screen
+        "displeasure": True,    # an unhappy / angry face for a few seconds
+        "cooldown": 12,         # seconds between two damages
+        "max_per_hour": 30,
+    },
     "remote": {
         "enabled": False,
         # Python mirror:  "https://your-site.com/api"

@@ -72,7 +72,11 @@ def main():
             Simulator(world, a.simulate).start()
         elif cfg["camera"]["enabled"] and not a.no_camera:
             from presence.camera import CameraTracker
-            CameraTracker(world, cfg["camera"]).start()
+            tracker = CameraTracker(world, cfg["camera"], cfg.get("identity"), cfg.get("damage"))
+            tracker.start()
+            if cfg["damage"].get("enabled") and cfg["damage"].get("shout"):
+                from presence.audio import ShoutDetector
+                ShoutDetector(tracker.shout, cfg["damage"].get("shout_db", 20)).start()
         if cfg["remote"]["enabled"]:
             from presence.sync import RemotePusher
             RemotePusher(world, cfg["remote"], cfg["api_key"]).start()
